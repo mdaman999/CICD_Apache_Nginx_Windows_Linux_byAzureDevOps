@@ -1,0 +1,78 @@
+trigger:
+  branches:
+    include:
+      - Apache_Windows
+      - Apache_Linux
+      - Apache_K8s
+      - Nginx_Windows
+      - Nginx_Linux
+      - Nginx_K8s
+
+pool:
+  name: 'Default' # Aapka self-hosted agent pool
+
+variables:
+  DOCKER_HUB_USER: 'mdaman999'
+  IMAGE_TAG: $(Build.BuildId)
+  group: docker-creds 
+
+jobs:
+- job: DeployJob
+  steps:
+  - checkout: self
+
+  # --- APACHE DEPLOYMENTS ---
+  - script: |
+      echo "Deploying to Apache on Windows..."
+      xcopy /y "index.html" "C:\Apache24\htdocs\"
+      echo "Visit: http://localhost:81"
+    displayName: 'Deploy to Apache Windows'
+    condition: eq(variables['Build.SourceBranchName'], 'Apache_Windows')
+
+  - script: |
+      echo "Deploying to Apache on WSL (Ubuntu)..."
+      wsl -u root cp -f index.html /var/www/ApacheHTML/index.html
+      echo "Visit: http://localhost:82"
+    displayName: 'Deploy to Apache Linux (WSL)'
+    condition: eq(variables['Build.SourceBranchName'], 'Apache_Linux')
+
+  # --- NGINX DEPLOYMENTS ---
+  - script: |
+      echo "Deploying to Nginx on Windows..."
+      xcopy /y "index.html" "C:\nginx\html\"
+      echo "Visit: http://localhost:83"
+    displayName: 'Deploy to Nginx Windows'
+    condition: eq(variables['Build.SourceBranchName'], 'Nginx_Windows')
+
+  - script: |
+      echo "Deploying to Nginx on WSL (Ubuntu)..."
+      wsl -u root cp -f index.html /var/www/NginxHTML/index.html
+      echo "Visit: http://localhost:84"
+    displayName: 'Deploy to Nginx Linux (WSL)'
+    condition: eq(variables['Build.SourceBranchName'], 'Nginx_Linux')
+
+  # --- K8s DEPLOYMENTS (Docker Build & Push) ---
+  - script: |
+      echo $(DOCKER_HUB_PASS) | docker login -u $(DOCKER_HUB_USER) --password-stdin
+      
+      # Determine Image Name based on branch
+      if [ "$(Build.SourceBranchName)" == "Apache_K8s" ]; then
+        IMAGE_NAME="my-apache-image"
+        DEPLOYMENT="my-apache-deployment"
+        CONTAINER="httpd"
+      else
+        IMAGE_NAME="my-nginx-image"
+        DEPLOYMENT="my-nginx-deployment"
+        CONTAINER="nginx"
+      fi
+
+      docker build -t $(DOCKER_HUB_USER)/$IMAGE_NAME:$(IMAGE_TAG) .
+      docker push $(DOCKER_HUB_USER)/$IMAGE_NAME:$(IMAGE_TAG)
+      
+      echo "Updating K8s: $DEPLOYMENT"
+      kubectl set image deployment/$DEPLOYMENT $CONTAINER=$(DOCKER_HUB_USER)/$IMAGE_NAME:$(IMAGE_TAG)
+      kubectl rollout status deployment/$DEPLOYMENT
+    displayName: 'Docker & K8s Deployment'
+    condition: or(eq(variables['Build.SourceBranchName'], 'Apache_K8s'), eq(variables['Build.SourceBranchName'], 'Nginx_K8s'))
+    env:
+      DOCKER_HUB_PASS: $(DOCKER_HUB_PASS)
